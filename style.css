@@ -58,6 +58,18 @@ select {
   min-height: 36px;
 }
 
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.icon-btn[aria-pressed="true"] { color: #22d3ee; background: rgba(34, 211, 238, 0.14); }
+
 .stepper {
   display: flex;
   align-items: center;

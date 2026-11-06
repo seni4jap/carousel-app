@@ -14,7 +14,10 @@ const state = {
   items: [], // { img, iw, ih, crop:{x,y,w,h}, w, h, x, y, sc, r, flip } — w/h = размер обрезанной области
   sel: null,
   cropping: false,
+  magnet: true,
+  guides: [], // активные линии прилипания { axis: 'x'|'y', v }
 };
+const SNAP_PX = 12; // радиус прилипания в экранных пикселях
 
 const view = { s: 0.3, ox: 0, oy: 0, fitted: false };
 
@@ -217,6 +220,137 @@ function draw() {
     }
     ctx.restore();
   }
+
+  // Направляющие прилипания
+  if (state.guides.length) {
+    ctx.save();
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 1.5;
+    for (const g of state.guides) {
+      ctx.beginPath();
+      if (g.axis === 'x') {
+        const x = view.ox + g.v * s;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, stageH);
+      } else {
+        const y = view.oy + g.v * s;
+        ctx.moveTo(0, y);
+        ctx.lineTo(stageW, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ---------- Вибрация ----------
+// Android: Vibration API. iOS Safari его не поддерживает, но даёт тактильный отклик
+// при переключении <input type="checkbox" switch> (iOS 18+) — используем это.
+const haptic = (() => {
+  if (typeof navigator.vibrate === 'function' && !/iP(hone|ad|od)/.test(navigator.userAgent)) {
+    return () => navigator.vibrate(12);
+  }
+  const label = document.createElement('label');
+  label.setAttribute('aria-hidden', 'true');
+  label.style.display = 'none';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.setAttribute('switch', '');
+  label.append(input);
+  document.body.append(label);
+  return () => label.click();
+})();
+
+// ---------- Магнит (прилипание краёв) ----------
+function axisAligned(it) {
+  return Math.abs(Math.sin(it.r)) < 1e-3 || Math.abs(Math.cos(it.r)) < 1e-3;
+}
+
+// Половины ширины/высоты фото на холсте с учётом поворота на 90°
+function halfExt(it) {
+  const a = (it.w * it.sc) / 2;
+  const b = (it.h * it.sc) / 2;
+  return Math.abs(Math.cos(it.r)) > 0.5 ? [a, b] : [b, a];
+}
+
+function snapTargets(exclude) {
+  const xs = [];
+  const ys = [0, slideH()];
+  for (let i = 0; i <= state.slides; i++) xs.push(i * slideW());
+  for (const it of state.items) {
+    if (it === exclude || !axisAligned(it)) continue;
+    const [hw, hh] = halfExt(it);
+    xs.push(it.x - hw, it.x + hw);
+    ys.push(it.y - hh, it.y + hh);
+  }
+  return { xs, ys };
+}
+
+// Ближайшая цель для любого из краёв; { d: сдвиг, t: цель } или null
+function nearest(edges, targets, th) {
+  let best = null;
+  for (const e of edges) {
+    for (const t of targets) {
+      const d = t - e;
+      if (Math.abs(d) <= th && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
+    }
+  }
+  return best;
+}
+
+// Вибрируем только в момент нового прилипания, а не на каждом кадре
+function feel(g, tx, ty) {
+  const kx = tx == null ? null : Math.round(tx);
+  const ky = ty == null ? null : Math.round(ty);
+  if ((kx != null && kx !== g.kx) || (ky != null && ky !== g.ky)) haptic();
+  g.kx = kx;
+  g.ky = ky;
+}
+
+function snapItem(g) {
+  const it = g.item;
+  state.guides = [];
+  if (!state.magnet || !axisAligned(it)) return;
+  const th = SNAP_PX / view.s;
+  const { xs, ys } = snapTargets(it);
+  const [hw, hh] = halfExt(it);
+  const bx = nearest([it.x - hw, it.x + hw], xs, th);
+  const by = nearest([it.y - hh, it.y + hh], ys, th);
+  if (bx) {
+    it.x += bx.d;
+    state.guides.push({ axis: 'x', v: bx.t });
+  }
+  if (by) {
+    it.y += by.d;
+    state.guides.push({ axis: 'y', v: by.t });
+  }
+  feel(g, bx ? bx.t : null, by ? by.t : null);
+}
+
+// При обрезке притягиваем палец (а с ним и край рамки) к целям
+function snapCropPointer(g, p) {
+  const it = g.item;
+  state.guides = [];
+  if (!state.magnet || !axisAligned(it)) return p;
+  const th = SNAP_PX / view.s;
+  const { xs, ys } = snapTargets(it);
+  const l = toLogical(p.x, p.y);
+  const localXisWorldX = Math.abs(Math.cos(it.r)) > 0.5;
+  const axes = [];
+  if (g.sides.l || g.sides.r) axes.push(localXisWorldX ? 'x' : 'y');
+  if (g.sides.t || g.sides.b) axes.push(localXisWorldX ? 'y' : 'x');
+  let tx = null;
+  let ty = null;
+  for (const axis of axes) {
+    const b = nearest([l[axis]], axis === 'x' ? xs : ys, th);
+    if (!b) continue;
+    l[axis] = b.t;
+    state.guides.push({ axis, v: b.t });
+    if (axis === 'x') tx = b.t;
+    else ty = b.t;
+  }
+  feel(g, tx, ty);
+  return { x: view.ox + l.x * view.s, y: view.oy + l.y * view.s };
 }
 
 // ---------- Обрезка ----------
@@ -402,12 +536,14 @@ cv.addEventListener('pointermove', (e) => {
   const g = gesture;
 
   if (g.type === 'cropEdge' && pointers.size === 1) {
-    applyCropEdges(g.item, g.sides, p.x, p.y);
+    const q = snapCropPointer(g, p);
+    applyCropEdges(g.item, g.sides, q.x, q.y);
   } else if (g.type === 'cropPan' && pointers.size === 1) {
     applyCropPan(g, p);
   } else if (g.type === 'drag' && pointers.size === 1) {
     g.item.x = g.ix + (p.x - g.sx) / view.s;
     g.item.y = g.iy + (p.y - g.sy) / view.s;
+    snapItem(g);
   } else if (g.type === 'pan' && pointers.size === 1) {
     const dx = p.x - g.sx;
     const dy = p.y - g.sy;
@@ -439,6 +575,7 @@ cv.addEventListener('pointermove', (e) => {
 function endPointer(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
+  state.guides = [];
   if (pointers.size === 0) {
     if (gesture?.type === 'pan' && !gesture.moved && e.type === 'pointerup') select(null);
     gesture = null;
@@ -636,6 +773,12 @@ function setSlides(n) {
 }
 $('slidesMinus').addEventListener('click', () => setSlides(state.slides - 1));
 $('slidesPlus').addEventListener('click', () => setSlides(state.slides + 1));
+
+$('magnetBtn').addEventListener('click', () => {
+  state.magnet = !state.magnet;
+  $('magnetBtn').setAttribute('aria-pressed', String(state.magnet));
+  toast(state.magnet ? 'Магнит включён' : 'Магнит выключен');
+});
 
 $('bgInput').addEventListener('input', (e) => {
   state.bg = e.target.value;
