@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Карусель</title>
+  <meta name="theme-color" content="#18181b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Карусель">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Карусель</div>
+    <div class="controls">
+      <select id="format" aria-label="Формат слайда">
+        <option value="4:5">4:5</option>
+        <option value="1:1">1:1</option>
+        <option value="3:4">3:4</option>
+        <option value="9:16">9:16</option>
+      </select>
+      <div class="stepper" aria-label="Количество слайдов">
+        <button id="slidesMinus" aria-label="Меньше слайдов">−</button>
+        <span id="slidesCount">3</span>
+        <button id="slidesPlus" aria-label="Больше слайдов">+</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hint" class="hint">
+      <p>Добавь фото — двигай пальцем,<br>щипком меняй размер и поворот.<br>Фото можно класть через стык слайдов.</p>
+    </div>
+  </main>
+
+  <div id="itemBar" class="itembar" hidden>
+    <button data-act="fill">Слайд</button>
+    <button data-act="span">2 слайда</button>
+    <button data-act="flip">Отразить</button>
+    <button data-act="front">Вперёд</button>
+    <button data-act="back">Назад</button>
+    <button data-act="dup">Копия</button>
+    <button data-act="del" class="danger">Удалить</button>
+  </div>
+
+  <footer class="bottom">
+    <label class="btn">
+      <input id="fileInput" type="file" accept="image/*" multiple hidden>
+      + Фото
+    </label>
+    <label class="btn swatch-btn">
+      Фон <span id="bgSwatch" class="swatch"></span>
+      <input id="bgInput" type="color" value="#ffffff">
+    </label>
+    <button id="exportBtn" class="btn primary">Экспорт</button>
+  </footer>
+
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <strong id="sheetTitle">Слайды</strong>
+        <button id="sheetClose" class="link">Закрыть</button>
+      </div>
+      <div id="previews" class="previews"></div>
+      <p class="note">Выкладывай слайды по порядку: 1, 2, 3… — тогда в карусели картинка будет бесшовной.</p>
+      <button id="saveAll" class="btn primary wide">Сохранить все</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
