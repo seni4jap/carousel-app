@@ -110,6 +110,11 @@ select {
   font-size: 14px;
 }
 .itembar .danger { color: var(--danger); }
+.itembar .grp { display: flex; gap: 6px; align-items: center; flex: none; }
+.itembar .grp[hidden] { display: none; }
+.itembar .crop-grp { flex: 1; }
+.itembar .bar-label { flex: 1; font-size: 12px; color: var(--muted); min-width: 0; line-height: 1.2; }
+.itembar .accent { background: var(--accent); color: var(--accent-text); font-weight: 600; }
 
 .bottom {
   display: flex;

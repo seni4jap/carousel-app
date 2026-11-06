@@ -11,8 +11,9 @@ const state = {
   format: '4:5',
   slides: 3,
   bg: '#ffffff',
-  items: [], // { img, w, h, x, y, sc, r, flip }
+  items: [], // { img, iw, ih, crop:{x,y,w,h}, w, h, x, y, sc, r, flip } — w/h = размер обрезанной области
   sel: null,
+  cropping: false,
 };
 
 const view = { s: 0.3, ox: 0, oy: 0, fitted: false };
@@ -79,7 +80,20 @@ function drawItem(c, it) {
   c.translate(it.x, it.y);
   c.rotate(it.r);
   c.scale(it.sc * (it.flip ? -1 : 1), it.sc);
-  c.drawImage(it.img, -it.w / 2, -it.h / 2, it.w, it.h);
+  const k = it.crop;
+  c.drawImage(it.img, k.x, k.y, k.w, k.h, -k.w / 2, -k.h / 2, k.w, k.h);
+  c.restore();
+}
+
+// Полное (необрезанное) фото — показываем полупрозрачно в режиме обрезки
+function drawItemGhost(c, it) {
+  c.save();
+  c.translate(it.x, it.y);
+  c.rotate(it.r);
+  c.scale(it.sc * (it.flip ? -1 : 1), it.sc);
+  const k = it.crop;
+  c.globalAlpha = 0.35;
+  c.drawImage(it.img, -k.w / 2 - k.x, -k.h / 2 - k.y, it.iw, it.ih);
   c.restore();
 }
 
@@ -155,25 +169,144 @@ function draw() {
   }
   ctx.restore();
 
-  // Рамка выделения
+  // Режим обрезки: всё фото полупрозрачно, видимая часть — поверх
   const it = state.sel;
+  if (it && state.cropping) {
+    ctx.save();
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(s, s);
+    drawItemGhost(ctx, it);
+    drawItem(ctx, it);
+    ctx.restore();
+  }
+
+  // Рамка выделения
   if (it) {
     ctx.save();
     ctx.translate(view.ox + it.x * s, view.oy + it.y * s);
     ctx.rotate(it.r);
     const hw = (it.w * it.sc * s) / 2;
     const hh = (it.h * it.sc * s) / 2;
-    ctx.strokeStyle = '#ff7a59';
+    ctx.strokeStyle = state.cropping ? '#ffffff' : '#ff7a59';
+    ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 2;
     ctx.strokeRect(-hw, -hh, hw * 2, hh * 2);
-    ctx.fillStyle = '#ff7a59';
-    for (const [cx, cy] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
+    if (state.cropping) {
+      // Ручки-«палочки» по серединам сторон и уголки
+      const L = Math.min(22, hw * 0.6, hh * 0.6);
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-      ctx.fill();
+      for (const [x1, y1, x2, y2] of [
+        [-L, -hh, L, -hh], [-L, hh, L, hh], [-hw, -L, -hw, L], [hw, -L, hw, L],
+        [-hw, -hh + L, -hw, -hh], [-hw, -hh, -hw + L, -hh],
+        [hw - L, -hh, hw, -hh], [hw, -hh, hw, -hh + L],
+        [hw, hh - L, hw, hh], [hw, hh, hw - L, hh],
+        [-hw + L, hh, -hw, hh], [-hw, hh, -hw, hh - L],
+      ]) {
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+    } else {
+      for (const [cx, cy] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.restore();
   }
+}
+
+// ---------- Обрезка ----------
+// Точка экрана → координаты в пикселях фото относительно центра обрезанной области
+function toImageSpace(it, px, py) {
+  const p = toLogical(px, py);
+  const dx = p.x - it.x;
+  const dy = p.y - it.y;
+  const c = Math.cos(-it.r);
+  const s = Math.sin(-it.r);
+  let u = (dx * c - dy * s) / it.sc;
+  const v = (dx * s + dy * c) / it.sc;
+  if (it.flip) u = -u;
+  return { u, v };
+}
+
+// Сдвиг центра фото на (su, sv) пикселей фото
+function shiftCenter(it, su, sv) {
+  const lx = (it.flip ? -su : su) * it.sc;
+  const ly = sv * it.sc;
+  const c = Math.cos(it.r);
+  const s = Math.sin(it.r);
+  it.x += lx * c - ly * s;
+  it.y += lx * s + ly * c;
+}
+
+function syncSize(it) {
+  it.w = it.crop.w;
+  it.h = it.crop.h;
+}
+
+// Какие края рамки под пальцем (или null)
+function cropSidesAt(it, px, py) {
+  const { u, v } = toImageSpace(it, px, py);
+  const tol = 26 / (it.sc * view.s);
+  const hw = it.w / 2;
+  const hh = it.h / 2;
+  if (Math.abs(u) > hw + tol || Math.abs(v) > hh + tol) return null;
+  const sides = {};
+  const dl = Math.abs(u + hw), dr = Math.abs(u - hw), dt = Math.abs(v + hh), db = Math.abs(v - hh);
+  if (Math.min(dl, dr) < tol) sides[dl < dr ? 'l' : 'r'] = true;
+  if (Math.min(dt, db) < tol) sides[dt < db ? 't' : 'b'] = true;
+  return Object.keys(sides).length ? sides : null;
+}
+
+function applyCropEdges(it, sides, px, py) {
+  const { u, v } = toImageSpace(it, px, py);
+  const k = it.crop;
+  const MIN = 36 / (it.sc * view.s); // минимум ~36px на экране
+  const hw = k.w / 2;
+  const hh = k.h / 2;
+  let su = 0;
+  let sv = 0;
+  if (sides.l) {
+    const d = clamp(u, -hw - k.x, hw - MIN) + hw;
+    k.x += d; k.w -= d; su += d / 2;
+  } else if (sides.r) {
+    const d = clamp(u, -hw + MIN, hw + (it.iw - k.x - k.w)) - hw;
+    k.w += d; su += d / 2;
+  }
+  if (sides.t) {
+    const d = clamp(v, -hh - k.y, hh - MIN) + hh;
+    k.y += d; k.h -= d; sv += d / 2;
+  } else if (sides.b) {
+    const d = clamp(v, -hh + MIN, hh + (it.ih - k.y - k.h)) - hh;
+    k.h += d; sv += d / 2;
+  }
+  syncSize(it);
+  shiftCenter(it, su, sv);
+}
+
+// Двигаем фото внутри рамки (рамка остаётся на месте)
+function applyCropPan(g, p) {
+  const it = g.item;
+  const dx = (p.x - g.sx) / view.s;
+  const dy = (p.y - g.sy) / view.s;
+  const c = Math.cos(-it.r);
+  const s = Math.sin(-it.r);
+  let du = (dx * c - dy * s) / it.sc;
+  const dv = (dx * s + dy * c) / it.sc;
+  if (it.flip) du = -du;
+  it.crop.x = clamp(g.cx - du, 0, it.iw - it.crop.w);
+  it.crop.y = clamp(g.cy - dv, 0, it.ih - it.crop.h);
+}
+
+function resetCrop(it) {
+  const k = it.crop;
+  shiftCenter(it, it.iw / 2 - (k.x + k.w / 2), it.ih / 2 - (k.y + k.h / 2));
+  it.crop = { x: 0, y: 0, w: it.iw, h: it.ih };
+  syncSize(it);
 }
 
 // ---------- Попадание по фото ----------
@@ -211,6 +344,18 @@ function twoPoints() {
 }
 
 function startSingle(p) {
+  if (state.cropping && state.sel) {
+    const it = state.sel;
+    const sides = cropSidesAt(it, p.x, p.y);
+    if (sides) {
+      gesture = { type: 'cropEdge', item: it, sides };
+      return;
+    }
+    if (hitTest(p.x, p.y) === it) {
+      gesture = { type: 'cropPan', item: it, sx: p.x, sy: p.y, cx: it.crop.x, cy: it.crop.y };
+      return;
+    }
+  }
   const hit = hitTest(p.x, p.y);
   if (hit) {
     select(hit);
@@ -223,7 +368,8 @@ function startSingle(p) {
 function startPinch() {
   const t = twoPoints();
   const onSel =
-    state.sel && (gesture?.type === 'drag' || hitTest(t.mid.x, t.mid.y) === state.sel);
+    state.sel &&
+    (['drag', 'cropEdge', 'cropPan'].includes(gesture?.type) || hitTest(t.mid.x, t.mid.y) === state.sel);
   if (onSel) {
     const it = state.sel;
     gesture = { type: 'pinchItem', item: it, t0: t, sc: it.sc, r: it.r, x: it.x, y: it.y };
@@ -255,7 +401,11 @@ cv.addEventListener('pointermove', (e) => {
   if (!gesture) return;
   const g = gesture;
 
-  if (g.type === 'drag' && pointers.size === 1) {
+  if (g.type === 'cropEdge' && pointers.size === 1) {
+    applyCropEdges(g.item, g.sides, p.x, p.y);
+  } else if (g.type === 'cropPan' && pointers.size === 1) {
+    applyCropPan(g, p);
+  } else if (g.type === 'drag' && pointers.size === 1) {
     g.item.x = g.ix + (p.x - g.sx) / view.s;
     g.item.y = g.iy + (p.y - g.sy) / view.s;
   } else if (g.type === 'pan' && pointers.size === 1) {
@@ -335,8 +485,15 @@ cv.addEventListener(
 
 // ---------- Выделение и действия с фото ----------
 function select(it) {
+  if (it !== state.sel) state.cropping = false;
   state.sel = it;
-  $('itemBar').hidden = !it;
+  updateBar();
+}
+
+function updateBar() {
+  $('itemBar').hidden = !state.sel;
+  $('barMain').hidden = state.cropping;
+  $('barCrop').hidden = !state.cropping;
   $('itemBar').querySelector('[data-act="span"]').hidden = state.slides < 2;
   requestAnimationFrame(resize); // панель меняет высоту сцены
 }
@@ -346,6 +503,17 @@ function slideIndexOf(it) {
 }
 
 const actions = {
+  crop() {
+    state.cropping = true;
+    updateBar();
+  },
+  cropDone() {
+    state.cropping = false;
+    updateBar();
+  },
+  uncrop(it) {
+    resetCrop(it);
+  },
   fill(it) {
     const k = slideIndexOf(it);
     it.r = 0;
@@ -373,7 +541,7 @@ const actions = {
     state.items.unshift(it);
   },
   dup(it) {
-    const c = { ...it, x: it.x + 60, y: it.y + 60 };
+    const c = { ...it, crop: { ...it.crop }, x: it.x + 60, y: it.y + 60 };
     state.items.splice(state.items.indexOf(it) + 1, 0, c);
     select(c);
   },
@@ -427,7 +595,10 @@ $('fileInput').addEventListener('change', async (e) => {
       const { img, w, h } = await loadImage(f);
       const k = state.items.length % state.slides;
       const sc = Math.min((slideW() * 0.85) / w, (slideH() * 0.85) / h);
-      last = { img, w, h, sc, r: 0, flip: false, x: k * slideW() + slideW() / 2, y: slideH() / 2 };
+      last = {
+        img, iw: w, ih: h, crop: { x: 0, y: 0, w, h }, w, h,
+        sc, r: 0, flip: false, x: k * slideW() + slideW() / 2, y: slideH() / 2,
+      };
       state.items.push(last);
     } catch {
       failed++;

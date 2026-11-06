@@ -39,13 +39,21 @@
   </main>
 
   <div id="itemBar" class="itembar" hidden>
-    <button data-act="fill">Слайд</button>
-    <button data-act="span">2 слайда</button>
-    <button data-act="flip">Отразить</button>
-    <button data-act="front">Вперёд</button>
-    <button data-act="back">Назад</button>
-    <button data-act="dup">Копия</button>
-    <button data-act="del" class="danger">Удалить</button>
+    <div id="barMain" class="grp">
+      <button data-act="crop">Обрезать</button>
+      <button data-act="fill">Слайд</button>
+      <button data-act="span">2 слайда</button>
+      <button data-act="flip">Отразить</button>
+      <button data-act="front">Вперёд</button>
+      <button data-act="back">Назад</button>
+      <button data-act="dup">Копия</button>
+      <button data-act="del" class="danger">Удалить</button>
+    </div>
+    <div id="barCrop" class="grp crop-grp" hidden>
+      <span class="bar-label">Тяни края рамки, фото двигай внутри</span>
+      <button data-act="uncrop">Сбросить</button>
+      <button data-act="cropDone" class="accent">Готово</button>
+    </div>
   </div>
 
   <footer class="bottom">
