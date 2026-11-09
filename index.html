@@ -15,15 +15,25 @@
 </head>
 <body>
   <header class="top">
-    <div class="brand">Карусель</div>
+    <div class="controls">
+      <button id="undoBtn" class="icon-btn" aria-label="Отменить" title="Отменить" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      </button>
+      <button id="redoBtn" class="icon-btn" aria-label="Повторить" title="Повторить" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+      </button>
+      <button id="newBtn" class="icon-btn" aria-label="Новый проект" title="Новый проект">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg>
+      </button>
+    </div>
     <div class="controls">
       <button id="magnetBtn" class="icon-btn" aria-pressed="true" aria-label="Магнит: прилипание краёв" title="Магнит">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 3h4v8a2 2 0 0 0 4 0V3h4"/><path d="M6 7h4M14 7h4"/></svg>
       </button>
       <select id="format" aria-label="Формат слайда">
         <option value="4:5">4:5</option>
-        <option value="1:1">1:1</option>
         <option value="3:4">3:4</option>
+        <option value="1:1">1:1</option>
         <option value="9:16">9:16</option>
       </select>
       <div class="stepper" aria-label="Количество слайдов">
@@ -37,7 +47,7 @@
   <main id="stage">
     <canvas id="cv"></canvas>
     <div id="hint" class="hint">
-      <p>Добавь фото — двигай пальцем,<br>щипком меняй размер и поворот.<br>Фото можно класть через стык слайдов.</p>
+      <p>Добавь фото или видео — двигай пальцем,<br>щипком меняй размер и поворот.<br>Их можно класть через стык слайдов.</p>
     </div>
   </main>
 
@@ -61,8 +71,8 @@
 
   <footer class="bottom">
     <label class="btn">
-      <input id="fileInput" type="file" accept="image/*" multiple hidden>
-      + Фото
+      <input id="fileInput" type="file" accept="image/*,video/*" multiple hidden>
+      + Добавить
     </label>
     <label class="btn swatch-btn">
       Фон <span id="bgSwatch" class="swatch"></span>
@@ -77,8 +87,14 @@
         <strong id="sheetTitle">Слайды</strong>
         <button id="sheetClose" class="link">Закрыть</button>
       </div>
+      <div id="qualitySeg" class="seg" role="group" aria-label="Размер фото">
+        <button data-scale="1" aria-pressed="true">1080 · JPEG</button>
+        <button data-scale="orig" aria-pressed="false">Оригинал · без сжатия</button>
+      </div>
+      <p id="exportStatus" class="status" hidden></p>
       <div id="previews" class="previews"></div>
-      <p class="note">Выкладывай слайды по порядку: 1, 2, 3… — тогда в карусели картинка будет бесшовной.</p>
+      <p class="note">Выкладывай слайды по порядку: 1, 2, 3… — тогда картинка будет бесшовной.
+        Чтобы Instagram не сжимал фото, включи в нём: Настройки → «Использование данных и качество медиафайлов» → «Загружать в самом высоком качестве».</p>
       <button id="saveAll" class="btn primary wide">Сохранить все</button>
     </div>
   </div>
