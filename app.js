@@ -669,7 +669,29 @@ function twoPoints() {
   };
 }
 
+// Режим «Поменять»: следующее нажатие на другое фото меняет их рамки местами
+let swapFrom = null;
+function finishSwap(target) {
+  const a = swapFrom;
+  swapFrom = null;
+  toast('');
+  if (!target || target === a || !state.items.includes(a)) return;
+  pushUndo();
+  const ra = itemBounds(a);
+  const rb = itemBounds(target);
+  fitToFrame(a, rb);
+  fitToFrame(target, ra);
+  haptic();
+  select(a);
+  changed();
+}
+
 function startSingle(p) {
+  if (swapFrom) {
+    finishSwap(hitTest(p.x, p.y));
+    gesture = { type: 'none' };
+    return;
+  }
   if (state.cropping && state.sel) {
     const it = state.sel;
     const sides = cropSidesAt(it, p.x, p.y);
@@ -870,9 +892,16 @@ function slideIndexOf(it) {
 }
 
 // Действия без изменения проекта (не попадают в отмену)
-const UI_ONLY = new Set(['crop', 'cropDone']);
+const UI_ONLY = new Set(['crop', 'cropDone', 'swap']);
 
 const actions = {
+  grow(it) {
+    fitToFrame(it, freeRectAround(it));
+  },
+  swap() {
+    swapFrom = state.sel;
+    toast('Теперь нажми на фото, с которым поменять', true);
+  },
   crop() {
     state.cropping = true;
     updateBar();
@@ -1301,6 +1330,312 @@ async function restoreProject() {
   }
   toast('');
 }
+
+// =====================================================================
+// Вписать фото в рамку (с обрезкой, без пустот)
+// =====================================================================
+// rect — в координатах холста {l, t, r, b}. Видимый центр фото по возможности сохраняется.
+function fitToFrame(it, rect) {
+  const m = it.media;
+  const fw = rect.r - rect.l;
+  const fh = rect.b - rect.t;
+  if (fw < 1 || fh < 1) return;
+  const ar = fw / fh;
+  let cw;
+  let ch;
+  if (m.iw / m.ih > ar) {
+    ch = m.ih;
+    cw = ch * ar;
+  } else {
+    cw = m.iw;
+    ch = cw / ar;
+  }
+  const pcx = it.crop.x + it.crop.w / 2;
+  const pcy = it.crop.y + it.crop.h / 2;
+  it.crop = {
+    x: clamp(pcx - cw / 2, 0, m.iw - cw),
+    y: clamp(pcy - ch / 2, 0, m.ih - ch),
+    w: cw,
+    h: ch,
+  };
+  syncSize(it);
+  it.r = 0;
+  it.sc = fw / cw;
+  it.x = (rect.l + rect.r) / 2;
+  it.y = (rect.t + rect.b) / 2;
+}
+
+// Самый большой свободный прямоугольник вокруг фото: до соседей и краёв холста
+function freeRectAround(it) {
+  const b = itemBounds(it);
+  const eps = 0.5;
+  const others = state.items.filter((o) => o !== it).map(itemBounds)
+    // уже перекрывающиеся с фото не считаем препятствием
+    .filter((o) => !(o.l < b.r - eps && o.r > b.l + eps && o.t < b.b - eps && o.b > b.t + eps));
+  let L = 0;
+  let R = stripW();
+  for (const o of others) {
+    if (o.b <= b.t + eps || o.t >= b.b - eps) continue; // не пересекается по вертикали
+    if (o.r <= b.l + eps) L = Math.max(L, o.r);
+    if (o.l >= b.r - eps) R = Math.min(R, o.l);
+  }
+  let T = 0;
+  let B = slideH();
+  for (const o of others) {
+    if (o.r <= L + eps || o.l >= R - eps) continue;
+    if (o.b <= b.t + eps) T = Math.max(T, o.b);
+    if (o.t >= b.b - eps) B = Math.min(B, o.t);
+  }
+  return { l: L, t: Math.max(0, Math.min(T, b.t)), r: R, b: Math.min(slideH(), Math.max(B, b.b)) };
+}
+
+// =====================================================================
+// Шаблоны раскладок
+// =====================================================================
+// Раскладка — набор ячеек без зазоров на всю ленту. Координаты ячеек:
+// x/w — в ширинах слайда (0…S), y/h — в высотах слайда (0…1).
+// Строим «колонки» (часть проходит через стыки), каждую делим на 1–3 ряда.
+function mulberry32(a) {
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomLayout(N, S, rng) {
+  const minC = Math.max(Math.ceil(N / 3), Math.ceil(S / 1.5));
+  const maxC = Math.min(N, Math.floor(S / 0.34));
+  if (minC > maxC) return null;
+  const C = minC + Math.floor(rng() * (maxC - minC + 1));
+  const rows = new Array(C).fill(1);
+  for (let left = N - C; left > 0; ) {
+    const i = Math.floor(rng() * C);
+    if (rows[i] < 3) {
+      rows[i]++;
+      left--;
+    }
+  }
+  // Ширины колонок; колонки с бо́льшим числом рядов чуть шире
+  const ws = rows.map((r) => (0.6 + rng()) * (1 + 0.25 * (r - 1)));
+  const sum = ws.reduce((a, b) => a + b, 0);
+  const bounds = [0];
+  for (let i = 0; i < C - 1; i++) bounds.push(bounds[i] + (ws[i] / sum) * S);
+  bounds.push(S);
+  // Иногда ровняем границу ровно по стыку — чистый разрез
+  for (let i = 1; i < C; i++) {
+    const k = Math.round(bounds[i]);
+    if (k > 0 && k < S && Math.abs(bounds[i] - k) < 0.25 && rng() < 0.4) bounds[i] = k;
+  }
+  for (let i = 1; i <= C; i++) if (bounds[i] - bounds[i - 1] < 0.2) return null;
+  const cells = [];
+  for (let i = 0; i < C; i++) {
+    const hs = Array.from({ length: rows[i] }, () => 0.7 + rng() * 0.6);
+    const hsum = hs.reduce((a, b) => a + b, 0);
+    let y = 0;
+    for (let j = 0; j < rows[i]; j++) {
+      const h = j === rows[i] - 1 ? 1 - y : hs[j] / hsum;
+      cells.push({ x: bounds[i], y, w: bounds[i + 1] - bounds[i], h });
+      y += h;
+    }
+  }
+  return { cells, bounds };
+}
+
+// Пары «ячейка ↔ фото»: вытянутые ячейки получают вытянутые фото
+function assignCells(cells, items, aspect) {
+  const cellAr = (c) => c.w / (c.h * aspect);
+  const itemAr = (it) => it.media.iw / it.media.ih;
+  const cs = cells.map((c, i) => ({ c, i })).sort((a, b) => cellAr(a.c) - cellAr(b.c));
+  const is = [...items].sort((a, b) => itemAr(a) - itemAr(b));
+  return cs.map((x, k) => ({ cell: x.c, item: is[k] }));
+}
+
+function scoreLayout(L, S, items, aspect) {
+  let pen = 0;
+  for (const c of L.cells) {
+    const lr = Math.abs(Math.log(c.w / (c.h * aspect)));
+    pen += lr * 0.3 + Math.max(0, lr - Math.log(1.9)) * 10;
+  }
+  // Узкие полоски фото у стыка смотрятся как ошибка
+  for (let k = 1; k < S; k++) {
+    let crossed = true;
+    for (const b of L.bounds) {
+      const d = Math.abs(b - k);
+      if (d < 1e-6) crossed = false;
+      else if (d < 0.18) pen += 6;
+    }
+    if (crossed) pen -= 0.6; // фото через стык — тот самый бесшовный эффект
+  }
+  for (const { cell, item } of assignCells(L.cells, items, aspect)) {
+    const d = Math.log(cell.w / (cell.h * aspect)) - Math.log(item.media.iw / item.media.ih);
+    pen += d * d * 0.5;
+  }
+  return pen;
+}
+
+function layoutKey(L) {
+  return L.cells.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)},${c.w.toFixed(1)}`).join('|');
+}
+
+function generateLayouts(items, S, seed, count = 6) {
+  const N = items.length;
+  const aspect = slideH() / slideW();
+  const rng = mulberry32(seed * 9973 + N * 31 + S);
+  const found = [];
+  for (let t = 0; t < 600; t++) {
+    const L = randomLayout(N, S, rng);
+    if (L) found.push({ L, score: scoreLayout(L, S, items, aspect) + rng() * 0.8 });
+  }
+  found.sort((a, b) => a.score - b.score);
+  const out = [];
+  const seen = new Set();
+  for (const f of found) {
+    const key = layoutKey(f.L);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f.L);
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+// Прямоугольник ячейки на холсте с учётом отступов
+function cellRect(c, S, gap) {
+  const W = slideW();
+  const H = slideH();
+  const e = 1e-6;
+  const inset = (atEdge) => (atEdge ? gap : gap / 2);
+  return {
+    l: c.x * W + inset(c.x < e),
+    r: (c.x + c.w) * W - inset(c.x + c.w > S - e),
+    t: c.y * H + inset(c.y < e),
+    b: (c.y + c.h) * H - inset(c.y + c.h > 1 - e),
+  };
+}
+
+const GAPS = { 0: 0, 1: 12, 2: 32 };
+const tpl = { slides: 3, seed: 1, gap: 0, layouts: [] };
+
+function openTemplates() {
+  if (state.items.length < 1) {
+    toast('Сначала добавь фото');
+    return;
+  }
+  select(null);
+  tpl.slides = state.slides;
+  $('tplSheet').hidden = false;
+  renderTemplates();
+}
+
+function renderTemplates() {
+  $('tplCount').textContent = tpl.slides;
+  $('tplMinus').disabled = tpl.slides <= MIN_SLIDES;
+  $('tplPlus').disabled = tpl.slides >= MAX_SLIDES;
+  for (const b of $('gapSeg').querySelectorAll('button')) {
+    b.setAttribute('aria-pressed', String(Number(b.dataset.gap) === tpl.gap));
+  }
+  tpl.layouts = generateLayouts(state.items, tpl.slides, tpl.seed);
+  const list = $('tplList');
+  list.innerHTML = '';
+  $('tplEmpty').hidden = tpl.layouts.length > 0;
+  $('tplEmpty').textContent =
+    `Для ${state.items.length} фото на ${tpl.slides} слайд(ах) раскладок нет — ` +
+    (state.items.length > tpl.slides * 6 ? 'добавь слайдов.' : 'убавь слайдов или добавь фото.');
+  const width = Math.min(list.clientWidth || 340, 640);
+  const height = Math.round((width * slideH()) / (slideW() * tpl.slides));
+  tpl.layouts.forEach((L, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'tpl';
+    btn.setAttribute('aria-label', `Раскладка ${idx + 1}`);
+    const c = document.createElement('canvas');
+    const d = window.devicePixelRatio || 1;
+    c.width = Math.round(width * d);
+    c.height = Math.round(height * d);
+    c.style.width = width + 'px';
+    c.style.height = height + 'px';
+    drawTemplateThumb(c, L);
+    btn.append(c);
+    btn.addEventListener('click', () => applyTemplate(L));
+    list.append(btn);
+  });
+}
+
+function drawTemplateThumb(c, L) {
+  const x = c.getContext('2d');
+  const S = tpl.slides;
+  const k = c.width / (slideW() * S);
+  x.imageSmoothingQuality = 'high';
+  x.scale(k, k);
+  x.fillStyle = state.bg;
+  x.fillRect(0, 0, slideW() * S, slideH());
+  const gap = GAPS[tpl.gap];
+  for (const { cell, item } of assignCells(L.cells, state.items, slideH() / slideW())) {
+    const r = cellRect(cell, S, gap);
+    const m = item.media;
+    const ar = (r.r - r.l) / (r.b - r.t);
+    let cw = m.iw;
+    let ch = m.ih;
+    if (m.iw / m.ih > ar) cw = ch * ar;
+    else ch = cw / ar;
+    x.drawImage(m.src, (m.iw - cw) / 2, (m.ih - ch) / 2, cw, ch, r.l, r.t, r.r - r.l, r.b - r.t);
+  }
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.strokeStyle = 'rgba(255,122,89,0.95)';
+  x.lineWidth = Math.max(1, c.width / 400);
+  x.setLineDash([6, 5]);
+  for (let i = 1; i < S; i++) {
+    const px = Math.round(i * slideW() * k) + 0.5;
+    x.beginPath();
+    x.moveTo(px, 0);
+    x.lineTo(px, c.height);
+    x.stroke();
+  }
+}
+
+function applyTemplate(L) {
+  pushUndo();
+  state.slides = tpl.slides;
+  const gap = GAPS[tpl.gap];
+  for (const { cell, item } of assignCells(L.cells, state.items, slideH() / slideW())) {
+    item.crop = { x: 0, y: 0, w: item.media.iw, h: item.media.ih }; // от центра фото
+    fitToFrame(item, cellRect(cell, tpl.slides, gap));
+  }
+  $('tplSheet').hidden = true;
+  syncControls();
+  // Показываем всю ленту целиком; приблизить можно щипком
+  view.s = Math.min(fitScale(), (stageW - 32) / stripW());
+  view.oy = (stageH - slideH() * view.s) / 2 - 8;
+  clampView();
+  toast('Раскладка готова');
+  changed();
+}
+
+$('tplBtn').addEventListener('click', openTemplates);
+$('tplClose').addEventListener('click', () => ($('tplSheet').hidden = true));
+$('tplSheet').addEventListener('click', (e) => {
+  if (e.target === $('tplSheet')) $('tplSheet').hidden = true;
+});
+$('tplMore').addEventListener('click', () => {
+  tpl.seed++;
+  renderTemplates();
+});
+$('tplMinus').addEventListener('click', () => {
+  tpl.slides = clamp(tpl.slides - 1, MIN_SLIDES, MAX_SLIDES);
+  renderTemplates();
+});
+$('tplPlus').addEventListener('click', () => {
+  tpl.slides = clamp(tpl.slides + 1, MIN_SLIDES, MAX_SLIDES);
+  renderTemplates();
+});
+$('gapSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-gap]');
+  if (!b) return;
+  tpl.gap = Number(b.dataset.gap);
+  renderTemplates();
+});
 
 // =====================================================================
 // Экспорт

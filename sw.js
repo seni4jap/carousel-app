@@ -1,4 +1,4 @@
-const CACHE = 'carousel-v4';
+const CACHE = 'carousel-v5';
 const FILES = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

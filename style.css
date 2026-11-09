@@ -90,6 +90,23 @@ select {
 }
 .seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); font-weight: 600; }
 .seg.busy { opacity: 0.5; pointer-events: none; }
+.btn.square { flex: none; width: 48px; padding: 0; }
+.tpl-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.tpl-controls .muted { color: var(--muted); font-size: 13px; }
+.seg.compact { margin: 0 0 0 auto; flex: none; }
+.seg.compact button { flex: none; padding: 7px 10px; }
+.tpl-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.tpl {
+  background: var(--surface);
+  padding: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+  outline: 2px solid transparent;
+  transition: outline-color 0.15s;
+}
+.tpl canvas { display: block; width: 100%; height: auto; }
+.tpl:active { outline-color: var(--accent); }
 .status { color: var(--muted); font-size: 13px; margin: 0 0 10px; font-variant-numeric: tabular-nums; }
 .status[hidden] { display: none; }
 .previews video {

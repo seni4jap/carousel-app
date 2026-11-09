@@ -54,6 +54,8 @@
   <div id="itemBar" class="itembar" hidden>
     <div id="barMain" class="grp">
       <button data-act="crop">Обрезать</button>
+      <button data-act="grow">Заполнить пробел</button>
+      <button data-act="swap">Поменять</button>
       <button data-act="fill">Слайд</button>
       <button data-act="span">2 слайда</button>
       <button data-act="flip">Отразить</button>
@@ -70,12 +72,16 @@
   </div>
 
   <footer class="bottom">
-    <label class="btn">
+    <label class="btn square" aria-label="Добавить фото или видео" title="Добавить фото или видео">
       <input id="fileInput" type="file" accept="image/*,video/*" multiple hidden>
-      + Добавить
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </label>
-    <label class="btn swatch-btn">
-      Фон <span id="bgSwatch" class="swatch"></span>
+    <button id="tplBtn" class="btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 4v16M10 11h11"/></svg>
+      Шаблоны
+    </button>
+    <label class="btn square swatch-btn" aria-label="Цвет фона" title="Цвет фона">
+      <span id="bgSwatch" class="swatch"></span>
       <input id="bgInput" type="color" value="#ffffff">
     </label>
     <button id="exportBtn" class="btn primary">Экспорт</button>
@@ -96,6 +102,31 @@
       <p class="note">Выкладывай слайды по порядку: 1, 2, 3… — тогда картинка будет бесшовной.
         Чтобы Instagram не сжимал фото, включи в нём: Настройки → «Использование данных и качество медиафайлов» → «Загружать в самом высоком качестве».</p>
       <button id="saveAll" class="btn primary wide">Сохранить все</button>
+    </div>
+  </div>
+
+  <div id="tplSheet" class="sheet" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <strong>Раскладка без пробелов</strong>
+        <button id="tplClose" class="link">Закрыть</button>
+      </div>
+      <div class="tpl-controls">
+        <div class="stepper" aria-label="Слайдов в раскладке">
+          <button id="tplMinus" aria-label="Меньше слайдов">−</button>
+          <span id="tplCount">3</span>
+          <button id="tplPlus" aria-label="Больше слайдов">+</button>
+        </div>
+        <span class="muted">слайда</span>
+        <div id="gapSeg" class="seg compact" role="group" aria-label="Отступы">
+          <button data-gap="0" aria-pressed="true">Встык</button>
+          <button data-gap="1" aria-pressed="false">Тонко</button>
+          <button data-gap="2" aria-pressed="false">Рамка</button>
+        </div>
+      </div>
+      <p id="tplEmpty" class="status" hidden></p>
+      <div id="tplList" class="tpl-list"></div>
+      <button id="tplMore" class="btn wide">Другие варианты</button>
     </div>
   </div>
 
