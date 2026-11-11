@@ -48,7 +48,11 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const isVideo = (it) => it.media.type === 'video';
 
 // exportScale: 1 — 1080 px JPEG для Instagram; 'orig' — разрешение оригиналов, PNG без сжатия
-const MAX_SLIDE_PX = 12e6; // предел площади слайда в режиме «Оригинал» (память iPhone)
+const IS_IOS =
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// Предел площади слайда в режиме «Оригинал»: Safari на iPhone ограничивает общую память canvas
+const MAX_SLIDE_PX = IS_IOS ? 8e6 : 12e6;
 try {
   state.exportScale = localStorage.getItem('exportScale') === '1' ? 1 : 'orig';
 } catch {}
@@ -1000,6 +1004,8 @@ function freeCanvas(c) {
 
 function hqContext(c) {
   const x = c.getContext('2d');
+  // Safari возвращает null, когда кончилась память под canvas
+  if (!x) throw new Error('canvas-memory');
   x.imageSmoothingEnabled = true;
   x.imageSmoothingQuality = 'high';
   return x;
@@ -1034,8 +1040,16 @@ async function makeImageMedia(file, id) {
   const ow = img.naturalWidth;
   const oh = img.naturalHeight;
   const k = Math.min(1, PREVIEW_SIDE / Math.max(ow, oh));
-  const src = resample(img, 0, 0, ow, oh, Math.round(ow * k), Math.round(oh * k));
+  let src = resample(img, 0, 0, ow, oh, Math.round(ow * k), Math.round(oh * k));
   URL.revokeObjectURL(url);
+  // ImageBitmap не занимает лимит памяти canvas в Safari — остаётся больше на экспорт
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(src);
+      freeCanvas(src);
+      src = bmp;
+    } catch {}
+  }
   return { id, type: 'image', file, src, iw: src.width, ih: src.height, ow, oh };
 }
 
@@ -1254,10 +1268,12 @@ let saveWarned = false;
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveChain = saveChain.then(saveProject).catch(() => {
+    saveChain = saveChain.then(saveProject).catch((err) => {
+      console.error('autosave', err);
       if (!saveWarned) {
         saveWarned = true;
-        toast('Автосохранение недоступно — не хватает места');
+        const quota = err && err.name === 'QuotaExceededError';
+        toast(quota ? 'Автосохранение: не хватает места' : `Автосохранение не сработало (${err?.name || 'ошибка'})`);
       }
     });
   }, 500);
@@ -1268,7 +1284,9 @@ async function saveProject() {
   for (const it of state.items) used.set(it.media.id, it.media);
   for (const [id, m] of used) {
     if (savedMedia.has(id)) continue;
-    await db.put('media', id, { type: m.type, file: m.file });
+    // Safari не умеет класть в IndexedDB файл прямо из галереи — копируем в обычный Blob
+    const data = new Blob([await m.file.arrayBuffer()], { type: m.file.type });
+    await db.put('media', id, { type: m.type, file: data });
     savedMedia.add(id);
   }
   await db.put('kv', 'project', {
@@ -1715,8 +1733,27 @@ async function renderStill(i, scale, cache, lossless) {
     lossless ? c.toBlob(r, 'image/png') : c.toBlob(r, 'image/jpeg', JPEG_QUALITY)
   );
   freeCanvas(c);
-  if (!blob) throw new Error('jpeg');
+  if (!blob) throw new Error('encode');
   return blob;
+}
+
+// Если на слайд не хватило памяти — пробуем меньше, в крайнем случае 1080 JPEG
+async function renderStillSafe(i, scale, cache, lossless) {
+  const attempts = [[scale, lossless]];
+  if (scale > 2) attempts.push([2, lossless]);
+  attempts.push([1, false]);
+  let lastErr;
+  for (const [s, l] of attempts) {
+    try {
+      return { blob: await renderStill(i, s, cache, l), scale: s, lossless: l };
+    } catch (err) {
+      lastErr = err;
+      console.error('slide', i + 1, 'scale', s, err);
+      for (const p of cache.values()) freeCanvas(p);
+      cache.clear();
+    }
+  }
+  throw lastErr;
 }
 
 function pickVideoMime() {
@@ -1850,6 +1887,7 @@ async function runExport() {
   const lossless = state.exportScale === 'orig';
   const scale = lossless ? nativeScale() : 1;
   const cache = new Map();
+  let reduced = false;
   try {
     for (let i = 0; i < state.slides; i++) {
       const n = i + 1;
@@ -1862,11 +1900,13 @@ async function runExport() {
         );
       } else {
         setStatus(`Слайд ${n} из ${state.slides}…`);
-        blob = await renderStill(i, scale, cache, lossless);
+        const res = await renderStillSafe(i, scale, cache, lossless);
+        blob = res.blob;
+        if (res.scale < scale) reduced = true;
       }
       dropPatchesBefore((i + 1) * W, cache);
       const ext =
-        kind === 'video' ? (blob.type.includes('mp4') ? 'mp4' : 'webm') : lossless ? 'png' : 'jpg';
+        kind === 'video' ? (blob.type.includes('mp4') ? 'mp4' : 'webm') : blob.type === 'image/png' ? 'png' : 'jpg';
       const name = `carousel-${stamp}-${String(n).padStart(2, '0')}.${ext}`;
       const file = new File([blob], name, { type: blob.type });
       const entry = { file, url: URL.createObjectURL(blob), kind };
@@ -1874,14 +1914,14 @@ async function runExport() {
       addPreview(entry, n);
     }
     const nv = exported.filter((e) => e.kind === 'video').length;
-    const px = `${Math.round(slideW() * scale)}×${Math.round(slideH() * scale)}`;
+    const px = reduced ? 'размер уменьшен' : `${Math.round(slideW() * scale)}×${Math.round(slideH() * scale)}`;
     $('sheetTitle').textContent = `Слайды: ${exported.length} · ${px}${nv ? ` · видео: ${nv}` : ''}`;
-    setStatus('');
+    setStatus(reduced ? 'Телефону не хватило памяти на полный размер — часть слайдов сохранена меньше.' : '');
     $('saveAll').disabled = false;
   } catch (err) {
     console.error(err);
     $('sheetTitle').textContent = 'Не получилось';
-    setStatus('Ошибка при сохранении. Попробуй меньше слайдов или режим 1080.');
+    setStatus(`Ошибка при подготовке (${err?.message || err?.name || 'неизвестно'}). Попробуй режим 1080 или меньше слайдов.`);
   } finally {
     for (const p of cache.values()) freeCanvas(p);
     exporting = false;
@@ -1923,8 +1963,14 @@ async function shareFiles(files) {
   if (canShareFiles(files)) {
     try {
       await navigator.share({ files });
+      setStatus('');
     } catch (err) {
-      if (err.name !== 'AbortError') toast('Не получилось поделиться');
+      if (err.name === 'AbortError') return;
+      console.error('share', err);
+      setStatus(
+        `Не открылось меню «Поделиться» (${err.name}). ` +
+          'Сохрани по одной: нажми на картинку или зажми её и выбери «Сохранить в Фото».'
+      );
     }
     return;
   }
